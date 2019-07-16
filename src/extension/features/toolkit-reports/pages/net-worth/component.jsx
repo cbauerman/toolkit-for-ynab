@@ -65,9 +65,11 @@ export class NetWorthComponent extends React.Component {
     this._calculateData();
   };
 
-  _renderReport = () => {
+  _renderMonthlyReport = () => {
     const _this = this;
-    const { labels, debts, assets, netWorths } = this.state.reportData;
+    const {
+      reportData: { labels, debts, assets, netWorths },
+    } = this.state;
 
     const pointHover = {
       events: {
@@ -120,6 +122,76 @@ export class NetWorthComponent extends React.Component {
         {
           id: 'networth',
           type: 'area',
+          name: l10n('toolkit.netWorth', 'Net Worth'),
+          fillColor: 'rgba(244,248,226,0.5)',
+          negativeFillColor: 'rgba(247, 220, 218, 0.5)',
+          data: netWorths,
+          point: pointHover,
+        },
+      ],
+    });
+
+    this.setState({ chart });
+  };
+
+  _renderDailyReport = () => {
+    const _this = this;
+    const {
+      reportData: { labels, debts, assets, netWorths },
+    } = this.state;
+
+    const pointHover = {
+      events: {
+        mouseOver: function() {
+          _this.setState({
+            hoveredData: {
+              assets: assets[this.index],
+              debts: debts[this.index],
+              netWorth: netWorths[this.index],
+            },
+          });
+        },
+      },
+    };
+
+    const chart = new Highcharts.Chart({
+      credits: false,
+      chart: { renderTo: 'tk-net-worth-chart' },
+      legend: { enabled: false },
+      title: { text: '' },
+      tooltip: { enabled: false },
+      xAxis: { categories: labels },
+      yAxis: {
+        title: { text: '' },
+        labels: {
+          formatter: function() {
+            return formatCurrency(this.value);
+          },
+        },
+      },
+      series: [
+        {
+          id: 'assets',
+          type: 'area',
+          name: l10n('toolkit.assets', 'Assets'),
+          color: 'rgba(142,208,223,1)',
+          data: assets,
+          pointPadding: 0,
+          point: pointHover,
+        },
+
+        {
+          id: 'debts',
+          type: 'area',
+          name: l10n('toolkit.debts', 'Debts'),
+          color: 'rgba(234,106,81,1)',
+          data: debts,
+          pointPadding: 0,
+          point: pointHover,
+        },
+        {
+          id: 'networth',
+          type: 'line',
           name: l10n('toolkit.netWorth', 'Net Worth'),
           fillColor: 'rgba(244,248,226,0.5)',
           negativeFillColor: 'rgba(247, 220, 218, 0.5)',
@@ -273,7 +345,7 @@ export class NetWorthComponent extends React.Component {
           netWorths: filteredNetWorths,
         },
       },
-      this._renderReport
+      showDaily ? this._renderDailyReport : this._renderMonthlyReport
     );
   }
 }
