@@ -2,6 +2,7 @@ import Highcharts from 'highcharts';
 import * as React from 'react';
 import * as PropTypes from 'prop-types';
 import { formatCurrency } from 'toolkit/extension/utils/currency';
+import { sortByAbsGettableAmount } from 'toolkit/extension/utils/amount';
 import { localizedMonthAndYear, sortByGettableDate } from 'toolkit/extension/utils/date';
 import { l10n } from 'toolkit/extension/utils/toolkit';
 import { FiltersPropType } from 'toolkit-reports/common/components/report-context/component';
@@ -137,7 +138,7 @@ export class NetWorthComponent extends React.Component {
   _renderDailyReport = () => {
     const _this = this;
     const {
-      reportData: { labels, debts, assets, netWorths },
+      reportData: { labels, debts, assets, netWorths, transactions: localTransactions },
     } = this.state;
 
     const pointHover = {
@@ -148,6 +149,7 @@ export class NetWorthComponent extends React.Component {
               assets: assets[this.index],
               debts: debts[this.index],
               netWorth: netWorths[this.index],
+              transactions: localTransactions[this.index],
             },
           });
         },
@@ -159,7 +161,6 @@ export class NetWorthComponent extends React.Component {
       chart: { renderTo: 'tk-net-worth-chart' },
       legend: { enabled: false },
       title: { text: '' },
-      tooltip: { enabled: false },
       xAxis: { categories: labels },
       yAxis: {
         title: { text: '' },
@@ -168,6 +169,32 @@ export class NetWorthComponent extends React.Component {
             return formatCurrency(this.value);
           },
         },
+      },
+      tooltip: {
+        pointFormatter: function() {
+          const theseTransactions = localTransactions[this.index].slice(0, 3);
+          return (
+            '<ul>' +
+            theseTransactions
+              .map(transaction => {
+                const payee = transaction.get('payeeName');
+                const transactionSubCategory = transaction.get('subCategory');
+                const subCategoryName = transactionSubCategory.get('name');
+                console.log(transaction);
+
+                return (
+                  '<li>' +
+                  (payee || subCategoryName) +
+                  ' : ' +
+                  formatCurrency(transaction.get('amount')) +
+                  '</li>'
+                );
+              })
+              .join('') +
+            '</ul>'
+          );
+        },
+        useHTML: true,
       },
       series: [
         {
@@ -209,13 +236,32 @@ export class NetWorthComponent extends React.Component {
       return;
     }
 
-    const accounts = new Map();
-    const allReportData = { assets: [], labels: [], debts: [], netWorths: [] };
+    // const accounts = new Map();
+    const allReportData = { assets: [], labels: [], debts: [], netWorths: [], transactions: [] };
     const transactions = this.props.allReportableTransactions.slice().sort(sortByGettableDate);
     const { showDaily } = this.state;
 
-    let lastDate = null;
-    function pushCurrentAccountData() {
+    // let lastDate = null;
+
+    const getTransactionDateLabel = transaction => {
+      return showDaily
+        ? transaction
+            .get('date')
+            .clone()
+            .toISOString()
+        : localizedMonthAndYear(
+            transaction
+              .get('date')
+              .clone()
+              .startOfMonth()
+          );
+    };
+
+    const accounts = new Map();
+    let dateTransactions = [];
+    let currentDateLabel;
+
+    const pushCurrentAccountData = () => {
       let assets = 0;
       let debts = 0;
       accounts.forEach(total => {
@@ -229,48 +275,42 @@ export class NetWorthComponent extends React.Component {
       allReportData.assets.push(assets);
       allReportData.debts.push(debts);
       allReportData.netWorths.push(assets - debts);
-      allReportData.labels.push(
-        showDaily ? lastDate.toISOString() : localizedMonthAndYear(lastDate)
+      allReportData.labels.push(currentDateLabel);
+
+      allReportData.transactions.push(
+        dateTransactions
+          .slice()
+          .sort(sortByAbsGettableAmount)
+          .reverse()
       );
-    }
+      dateTransactions = [];
+    };
 
     transactions.forEach(transaction => {
-      const transactionDate = showDaily
-        ? transaction.get('date').clone()
-        : transaction
-            .get('date')
-            .clone()
-            .startOfMonth();
-      if (lastDate === null) {
-        lastDate = transactionDate;
-      }
-
-      // we're on a new month or day
-      if (transactionDate.toISOString() !== lastDate.toISOString()) {
-        pushCurrentAccountData();
-        lastDate = transactionDate;
-      }
-
       const transactionAccountId = transaction.get('accountId');
-      if (this.props.filters.accountFilterIds.has(transactionAccountId)) {
-        return;
+      const transactionAmount = transaction.get('amount');
+      const transactionDateLabel = getTransactionDateLabel(transaction);
+
+      if (currentDateLabel && currentDateLabel !== transactionDateLabel) {
+        pushCurrentAccountData();
       }
 
-      const transactionAmount = transaction.get('amount');
-      if (accounts.has(transactionAccountId)) {
-        accounts.set(transactionAccountId, accounts.get(transactionAccountId) + transactionAmount);
-      } else {
-        accounts.set(transactionAccountId, transactionAmount);
+      currentDateLabel = transactionDateLabel;
+
+      if (!this.props.filters.accountFilterIds.has(transactionAccountId)) {
+        if (accounts.has(transactionAccountId)) {
+          accounts.set(
+            transactionAccountId,
+            accounts.get(transactionAccountId) + transactionAmount
+          );
+        } else {
+          accounts.set(transactionAccountId, transactionAmount);
+        }
+        dateTransactions.push(transaction);
       }
     });
 
-    if (
-      lastDate &&
-      allReportData.labels[allReportData.labels.length - 1] !==
-        (showDaily ? lastDate.toISOString() : localizedMonthAndYear(lastDate))
-    ) {
-      pushCurrentAccountData();
-    }
+    pushCurrentAccountData();
 
     // make sure we have a label for any months which have empty data
     const { fromDate, toDate } = this.props.filters.dateFilter;
@@ -294,7 +334,13 @@ export class NetWorthComponent extends React.Component {
             showDaily ? transactionDate.toISOString() : localizedMonthAndYear(transactionDate)
           )
         ) {
-          const { assets, debts, netWorths, labels } = allReportData;
+          const {
+            assets,
+            debts,
+            netWorths,
+            labels,
+            transactions: localTransactions,
+          } = allReportData;
           labels.splice(
             currentIndex,
             0,
@@ -303,6 +349,7 @@ export class NetWorthComponent extends React.Component {
           assets.splice(currentIndex, 0, assets[currentIndex - 1] || 0);
           debts.splice(currentIndex, 0, debts[currentIndex - 1] || 0);
           netWorths.splice(currentIndex, 0, netWorths[currentIndex - 1] || 0);
+          localTransactions.splice(currentIndex, 0, localTransactions[currentIndex - 1] || 0);
         }
 
         currentIndex++;
@@ -316,7 +363,7 @@ export class NetWorthComponent extends React.Component {
 
     // Net Worth is calculated from the start of time so we need to handle "filters" here
     // rather than using `filteredTransactions` from context.
-    const { labels, assets, debts, netWorths } = allReportData;
+    const { labels, assets, debts, netWorths, transactions: localTransactions } = allReportData;
     let startIndex = labels.findIndex(
       label => label === (showDaily ? fromDate.toISOString() : localizedMonthAndYear(fromDate))
     );
@@ -330,6 +377,7 @@ export class NetWorthComponent extends React.Component {
     const filteredDebts = debts.slice(startIndex, endIndex);
     const filteredAssets = assets.slice(startIndex, endIndex);
     const filteredNetWorths = netWorths.slice(startIndex, endIndex);
+    const filteredTransactions = localTransactions.slice(startIndex, endIndex);
 
     this.setState(
       {
@@ -337,12 +385,14 @@ export class NetWorthComponent extends React.Component {
           assets: assets[assets.length - 1] || 0,
           debts: debts[debts.length - 1] || 0,
           netWorth: netWorths[netWorths.length - 1] || 0,
+          transactions: localTransactions[localTransactions.length - 1] || 0,
         },
         reportData: {
           labels: filteredLabels,
           debts: filteredDebts,
           assets: filteredAssets,
           netWorths: filteredNetWorths,
+          transactions: filteredTransactions,
         },
       },
       showDaily ? this._renderDailyReport : this._renderMonthlyReport
